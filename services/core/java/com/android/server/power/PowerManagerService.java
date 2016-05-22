@@ -17,6 +17,7 @@
 package com.android.server.power;
 
 import android.app.ActivityManager;
+import android.os.ServiceManager;
 import android.util.SparseIntArray;
 import com.android.internal.app.IAppOpsService;
 import com.android.internal.app.IBatteryStats;
@@ -39,6 +40,9 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.database.ContentObserver;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.SystemSensorManager;
 import android.hardware.display.DisplayManagerInternal;
@@ -63,6 +67,7 @@ import android.os.UserHandle;
 import android.os.WorkSource;
 import android.provider.Settings;
 import android.service.dreams.DreamManagerInternal;
+import android.telephony.TelephonyManager;
 import android.util.EventLog;
 import android.util.Slog;
 import android.util.TimeUtils;
@@ -158,6 +163,8 @@ public final class PowerManagerService extends SystemService
 
     // Default setting for double tap to wake.
     private static final int DEFAULT_DOUBLE_TAP_TO_WAKE = 0;
+
+    private static final float PROXIMITY_NEAR_THRESHOLD = 5.0f;
 
     private final Context mContext;
     private final ServiceThread mHandlerThread;
@@ -504,6 +511,14 @@ public final class PowerManagerService extends SystemService
     private static native void nativeSetFeature(int featureId, int data);
     private static native void nativeSendPowerHintString(int hintId, String data);
 
+    private SensorManager mSensorManager;
+    private Sensor mProximitySensor;
+    private boolean mProximityWakeEnabled;
+    private int mProximityTimeOut;
+    private boolean mProximityWakeSupported;
+    android.os.PowerManager.WakeLock mProximityWakeLock;
+    SensorEventListener mProximityListener;
+
     public PowerManagerService(Context context) {
         super(context);
         mContext = context;
@@ -586,6 +601,10 @@ public final class PowerManagerService extends SystemService
             // Initialize display power management.
             mDisplayManagerInternal.initPowerManagement(
                     mDisplayPowerCallbacks, mHandler, sensorManager);
+
+            // Initialize proximity sensor
+            mSensorManager = (SensorManager) mContext.getSystemService(Context.SENSOR_SERVICE);
+            mProximitySensor = mSensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
 
             // Register for broadcasts from other components of the system.
             IntentFilter filter = new IntentFilter();
@@ -723,6 +742,19 @@ public final class PowerManagerService extends SystemService
                 com.android.internal.R.integer.config_button_brightness_default);
         mSupportsDoubleTapWakeConfig = resources.getBoolean(
                 com.android.internal.R.bool.config_supportDoubleTapWake);
+
+		mProximityWakeEnabled = true;
+        mProximityTimeOut = 250;/*resources.getInteger(
+                org.cyanogenmod.platform.internal.R.integer.config_proximityCheckTimeout);*/       
+		mProximityWakeSupported = true;/*resources.getBoolean(
+                org.cyanogenmod.platform.internal.R.bool.config_proximityCheckOnWake);*/
+        /*mProximityWakeEnabledByDefaultConfig = true;resources.getBoolean(
+                org.cyanogenmod.platform.internal.R.bool.config_proximityCheckOnWakeEnabledByDefault);*/
+        if (mProximityWakeSupported) {
+            PowerManager powerManager = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
+            mProximityWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
+                    "ProximityWakeLock");
+        }
     }
 
     private void updateSettingsLocked() {
@@ -3345,22 +3377,115 @@ public final class PowerManagerService extends SystemService
         }
 
         @Override // Binder call
-        public void wakeUp(long eventTime, String reason, String opPackageName) {
-            if (eventTime > SystemClock.uptimeMillis()) {
+        public void wakeUp(long _eventTime, String _reason, String _opPackageName) {
+            if (_eventTime > SystemClock.uptimeMillis()) {
                 throw new IllegalArgumentException("event time must not be in the future");
             }
+
+			final long eventTime = _eventTime;
+			final String reason = _reason;
+			final String opPackageName = _opPackageName;
 
             mContext.enforceCallingOrSelfPermission(
                     android.Manifest.permission.DEVICE_POWER, null);
 
             final int uid = Binder.getCallingUid();
-            final long ident = Binder.clearCallingIdentity();
+            /*final long ident = Binder.clearCallingIdentity();
             try {
                 wakeUpInternal(eventTime, reason, uid, opPackageName, uid);
             } finally {
                 Binder.restoreCallingIdentity(ident);
+            }*/
+
+			Runnable r = new Runnable() {
+                @Override
+                public void run() {
+                    final long ident = Binder.clearCallingIdentity();
+                    try {
+                        wakeUpInternal(eventTime, reason, uid, opPackageName, uid);
+                    } finally {
+                        Binder.restoreCallingIdentity(ident);
+                    }
+                }
+            };
+            //if (checkProximity) {
+                runWithProximityCheck(r);
+            /*} else {
+                r.run();
+            }*/
+        }
+
+		private static final int MSG_WAKE_UP = 5;
+
+		private void runWithProximityCheck(Runnable r) {
+            if (mHandler.hasMessages(MSG_WAKE_UP)) {
+                // There is already a message queued;
+                return;
+            }
+
+            TelephonyManager tm = (TelephonyManager)mContext.getSystemService(
+                    Context.TELEPHONY_SERVICE);
+            boolean hasIncomingCall = tm.getCallState() == TelephonyManager.CALL_STATE_RINGING;
+
+            if (mProximityWakeSupported && mProximityWakeEnabled && mProximitySensor != null
+                    && !hasIncomingCall) {
+                Message msg = mHandler.obtainMessage(MSG_WAKE_UP);
+                msg.obj = r;
+                mHandler.sendMessageDelayed(msg, mProximityTimeOut);
+                runPostProximityCheck(r);
+            } else {
+                r.run();
             }
         }
+
+        private void runPostProximityCheck(final Runnable r) {
+            if (mSensorManager == null) {
+                r.run();
+                return;
+            }
+            synchronized (mProximityWakeLock) {
+                mProximityWakeLock.acquire();
+                mProximityListener = new SensorEventListener() {
+                    @Override
+                    public void onSensorChanged(SensorEvent event) {
+                        cleanupProximityLocked();
+                        if (!mHandler.hasMessages(MSG_WAKE_UP)) {
+                            Slog.w(TAG, "The proximity sensor took too long, wake event already triggered!");
+                            return;
+                        }
+                        mHandler.removeMessages(MSG_WAKE_UP);
+                        float distance = event.values[0];
+                        if (distance >= PROXIMITY_NEAR_THRESHOLD ||
+                                distance >= mProximitySensor.getMaximumRange()) {
+                            r.run();
+                        } else {
+                            Slog.w(TAG, "Not waking up.  Proximity sensor blocked.");
+                        }
+                    }
+
+                    @Override
+                    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+                };
+                mSensorManager.registerListener(mProximityListener,
+                       mProximitySensor, SensorManager.SENSOR_DELAY_FASTEST);
+            }
+        }
+
+		private void cleanupProximity() {
+		    synchronized (mProximityWakeLock) {
+		        cleanupProximityLocked();
+		    }
+		}
+
+		private void cleanupProximityLocked() {
+		    if (mProximityWakeLock.isHeld()) {
+		        mProximityWakeLock.release();
+		    }
+		    if (mProximityListener != null) {
+		        mSensorManager.unregisterListener(mProximityListener);
+		        mProximityListener = null;
+		    }
+		}
 
         @Override // Binder call
         public void goToSleep(long eventTime, int reason, int flags) {

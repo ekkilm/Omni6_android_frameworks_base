@@ -23,6 +23,9 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.preference.PreferenceManager;
+import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.settingslib.R;
@@ -196,6 +199,8 @@ public final class BluetoothEventManager {
                 cachedDevice = mDeviceManager.addDevice(mLocalAdapter, mProfileManager, device);
                 Log.d(TAG, "DeviceFoundHandler created new CachedBluetoothDevice: "
                         + cachedDevice);
+                // callback to UI to create Preference for new device
+                dispatchDeviceAdded(cachedDevice);
             }
             cachedDevice.setRssi(rssi);
             cachedDevice.setBtClass(btClass);

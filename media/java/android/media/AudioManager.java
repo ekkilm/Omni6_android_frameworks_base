@@ -311,6 +311,32 @@ public class AudioManager {
      */
     public static final String EXTRA_ENCODINGS = "android.media.extra.ENCODINGS";
 
+    /**
+     * @hide Broadcast intent when RemoteControlClient list is updated.
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String RCC_CHANGED_ACTION =
+                "org.codeaurora.bluetooth.RCC_CHANGED_ACTION";
+
+    /**
+     * @hide Used for sharing the calling package name
+     */
+    public static final String EXTRA_CALLING_PACKAGE_NAME =
+            "org.codeaurora.bluetooth.EXTRA_CALLING_PACKAGE_NAME";
+
+    /**
+     * @hide Used for sharing the focus changed value
+     */
+    public static final String EXTRA_FOCUS_CHANGED_VALUE =
+            "org.codeaurora.bluetooth.EXTRA_FOCUS_CHANGED_VALUE";
+
+    /**
+     * @hide Used for sharing the availability changed value
+     */
+    public static final String EXTRA_AVAILABLITY_CHANGED_VALUE =
+            "org.codeaurora.bluetooth.EXTRA_AVAILABLITY_CHANGED_VALUE";
+
+
     /** The audio stream for phone calls */
     public static final int STREAM_VOICE_CALL = AudioSystem.STREAM_VOICE_CALL;
     /** The audio stream for system sounds */
@@ -2638,6 +2664,13 @@ public class AudioManager {
             return false;
         }
         rctlr.startListeningToSessions();
+        IAudioService service = getService();
+        try {
+            service.updateRemoteControllerOnExistingMediaPlayers();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error in calling Audio service interface" +
+                "updateRemoteControllerOnExistingMediaPlayers() due to " + e);
+        }
         return true;
     }
 
@@ -2657,6 +2690,24 @@ public class AudioManager {
             return;
         }
         rctlr.stopListeningToSessions();
+    }
+
+    /**
+     * @hide
+     */
+    public void updateMediaPlayerList(String packageName, boolean toAdd) {
+        IAudioService service = getService();
+        try {
+            if (toAdd) {
+                Log.d(TAG, "updateMediaPlayerList: Add RCC " + packageName + " to List");
+                service.addMediaPlayerAndUpdateRemoteController(packageName);
+            } else {
+                Log.d(TAG, "updateMediaPlayerList: Remove RCC " + packageName + " from List");
+                service.removeMediaPlayerAndUpdateRemoteController(packageName);
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "Exception while executing updateMediaPlayerList: " + e);
+        }
     }
 
     /**
@@ -2812,6 +2863,52 @@ public class AudioManager {
         }
     }
 
+    /**
+     * @hide
+     * Request the user of a RemoteControlClient to play the requested item.
+     * @param generationId the RemoteControlClient generation counter for which this request is
+     *     issued.
+     * @param uid uid of the song to be played.
+     * @scope scope of the file system to use
+     */
+    public void setRemoteControlClientPlayItem(long uid, int scope) {
+        IAudioService service = getService();
+        try {
+            service.setRemoteControlClientPlayItem(uid, scope);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in setRemoteControlClientPlayItem(" +
+                                                    uid + ", " + scope + ")", e);
+        }
+    }
+
+    /**
+     * @hide
+     * Request the user of a RemoteControlClient to provide with the now playing list entries.
+     * @param generationId the RemoteControlClient generation counter for which this request is
+     *     issued.
+     */
+    public void getRemoteControlClientNowPlayingEntries() {
+        IAudioService service = getService();
+        try {
+            service.getRemoteControlClientNowPlayingEntries();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in getRemoteControlClientNowPlayingEntries(" + ")", e);
+        }
+    }
+
+    /**
+     * @hide
+     * Request the user of a RemoteControlClient to set the music player as current browsed player.
+     */
+    public void setRemoteControlClientBrowsedPlayer() {
+        Log.d(TAG, "setRemoteControlClientBrowsedPlayer: ");
+        IAudioService service = getService();
+        try {
+            service.setRemoteControlClientBrowsedPlayer();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in setRemoteControlClientBrowsedPlayer(" + ")", e);
+        }
+    }
 
     /**
      *  @hide
