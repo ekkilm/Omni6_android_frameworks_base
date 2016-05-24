@@ -45,6 +45,7 @@ import android.view.Display;
 import android.view.WindowManagerPolicy;
 
 import java.io.PrintWriter;
+import java.lang.Thread;
 
 import com.android.internal.policy.IKeyguardService;
 import com.android.server.policy.keyguard.KeyguardServiceWrapper;
@@ -53,6 +54,7 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.IBinder;
 import android.os.UserHandle;
+import android.os.SystemProperties;
 
 /**
  * Controls the power state of the display.
@@ -389,12 +391,31 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                         TYPICAL_PROXIMITY_THRESHOLD);
             }
         }
-				Intent intent = new Intent();
-        intent.setClassName(KEYGUARD_PACKAGE,
-                KEYGUARD_CLASS);
-        mContext.bindServiceAsUser(intent, mKeyguardConnection,
-                Context.BIND_AUTO_CREATE, UserHandle.OWNER);
+				Thread delayedKeyguardInitThread = new Thread(mDelayedKeyguardInitRunnable);
+				delayedKeyguardInitThread.start();
     }
+    private Runnable mDelayedKeyguardInitRunnable = new Runnable() {
+        @Override
+        public void run() {
+			while (true)
+			{
+				String val = SystemProperties.get("sys.boot_completed", "0");
+				if (val.equals("1"))
+				{
+				    Intent intent = new Intent();
+					intent.setClassName(KEYGUARD_PACKAGE, KEYGUARD_CLASS);
+					mContext.bindServiceAsUser(intent, mKeyguardConnection,
+							Context.BIND_AUTO_CREATE, UserHandle.OWNER);
+					break;
+				} else {
+					Slog.d(TAG, "Waiting for boot completed..");
+					try {
+   						Thread.sleep(1000);
+   					} catch (Exception e) { }
+				}
+			}
+        }
+    };
 
     /**
      * Returns true if the proximity sensor screen-off function is available.
