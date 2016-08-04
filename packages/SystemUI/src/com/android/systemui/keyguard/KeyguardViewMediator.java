@@ -29,6 +29,7 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.UserInfo;
 import android.media.AudioManager;
 import android.media.SoundPool;
@@ -137,6 +138,8 @@ public class KeyguardViewMediator extends SystemUI {
 
     private static final String DISMISS_KEYGUARD_SECURELY_ACTION =
         "com.android.keyguard.action.DISMISS_KEYGUARD_SECURELY";
+
+    private static final String DECRYPT_STATE = "trigger_restart_framework";
 
     // used for handler messages
     private static final int SHOW = 2;
@@ -320,6 +323,8 @@ public class KeyguardViewMediator extends SystemUI {
      * committed when finished going to sleep.
      */
     private boolean mPendingLock;
+
+    private boolean mCryptKeeperEnabled = true;
 
     private boolean mWakeAndUnlocking;
     private IKeyguardDrawnCallback mDrawnCallback;
@@ -807,6 +812,29 @@ public class KeyguardViewMediator extends SystemUI {
         }
     }
 
+    private boolean isKeyguardDisabled(int userId) {
+        if (!mExternallyEnabled) {
+            if (DEBUG) Log.d(TAG, "isKeyguardDisabled: keyguard is disabled externally");
+            return true;
+        }
+        if (mLockPatternUtils.isLockScreenDisabled(userId)) {
+            if (DEBUG) Log.d(TAG, "isKeyguardDisabled: keyguard is disabled by setting");
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isCryptKeeperEnabled() {
+        if (!mCryptKeeperEnabled) {
+            // once it's disabled, it's disabled.
+            return false;
+        }
+        final String state = SystemProperties.get("vold.decrypt");
+        mCryptKeeperEnabled = !"".equals(state) && !DECRYPT_STATE.equals(state);
+        if (DEBUG) Log.w(TAG, "updated crypt keeper state to: " + mCryptKeeperEnabled);
+        return mCryptKeeperEnabled;
+    }
+
     /**
      * A dream started.  We should lock after the usual screen-off lock timeout but only
      * if there is a secure lock pattern.
@@ -1052,6 +1080,14 @@ public class KeyguardViewMediator extends SystemUI {
         // if the keyguard is already showing, don't bother
         if (mStatusBarKeyguardViewManager.isShowing()) {
             if (DEBUG) Log.d(TAG, "doKeyguard: not showing because it is already showing");
+            resetStateLocked();
+            return;
+        }
+
+        // Ugly hack to ensure keyguard is not shown on top of the CryptKeeper which prevents
+        // a user from being able to decrypt their device.
+        if (isCryptKeeperEnabled()) {
+            if (DEBUG) Log.d(TAG, "doKeyguard: not showing because CryptKeeper is enabled");
             resetStateLocked();
             return;
         }

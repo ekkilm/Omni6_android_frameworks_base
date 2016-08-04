@@ -2803,6 +2803,22 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     /** {@inheritDoc} */
     @Override
     public long interceptKeyBeforeDispatching(WindowState win, KeyEvent event, int policyFlags) {
+        // Specific device key handling
+        if (mDeviceKeyHandler != null) {
+            try {
+                KeyEvent newEvent = mDeviceKeyHandler.translateKeyEvent(event);
+                if (newEvent != null) {
+                    event = newEvent;
+                }
+
+                // The device says if we should ignore this event.
+                if (mDeviceKeyHandler.isDisabledKeyEvent(event)) {
+                    return -1;
+                }
+            } catch (Exception e) {
+                Slog.w(TAG, "Could not dispatch event to device key handler", e);
+            }
+        }
         final boolean keyguardOn = keyguardOn();
         final int keyCode = event.getKeyCode();
         final int repeatCount = event.getRepeatCount();
