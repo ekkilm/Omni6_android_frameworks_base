@@ -56,7 +56,8 @@ static const char* kPathWhitelist[] = {
   "/system/framework/framework-res.apk",
   "/dev/urandom",
   "/dev/ion",
-  "@netlink@"
+  "@netlink@",
+  "unnamed"
 };
 
 static const char* kFdPath = "/proc/self/fd";
@@ -313,8 +314,9 @@ class FileDescriptorInfo {
     size_t path_len = addr_len - offsetof(struct sockaddr_un, sun_path);
     // This is an unnamed local socket, we do not accept it.
     if (path_len == 0) {
-      ALOGE("Unsupported AF_UNIX socket (fd=%d) with empty path.", fd);
-      return false;
+      ALOGE("Supported AF_UNIX socket (fd=%d) with empty path.", fd);
+      (*result) = "unnamed";
+      return true;//false;
     }
 
     // This is a local socket with an abstract address, we do not accept it.
