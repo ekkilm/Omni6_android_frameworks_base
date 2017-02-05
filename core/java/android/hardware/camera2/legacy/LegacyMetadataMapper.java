@@ -338,6 +338,10 @@ public class LegacyMetadataMapper {
                         String.format("mapStreamConfigs - Skipping format %x", format));
             }
         }
+		
+		// TS
+        appendStreamConfig(availableStreamConfigs,
+                HAL_PIXEL_FORMAT_RGBA_8888, p.getSupportedVideoSizes());
 
         appendStreamConfig(availableStreamConfigs,
                 HAL_PIXEL_FORMAT_BLOB, p.getSupportedPictureSizes());
